@@ -72,6 +72,30 @@ public class comsUtil {
         System.out.println();
     }
 
+    /**
+     * 将字节数组转换为十六进制格式字符串
+     * @param data 要转换的字节数组
+     * @return 十六进制格式的字符串，例如 "01 A2 FF 3B"
+     */
+    public static String bytesToHexString(byte[] data) {
+        if (data == null || data.length == 0) {
+            return "";
+        }
+
+        StringBuilder hexString = new StringBuilder();
+        for (byte b : data) {
+            hexString.append(String.format("%02X ", b));
+        }
+
+        // 移除最后一个空格
+        return hexString.toString().trim();
+    }
+
+    // 同时保留原来的打印方法，但改为使用新的字符串方法
+    /*public static void printHex(byte[] data) {
+        System.out.println(bytesToHexString(data));
+    }*/
+
     public static void main(String[] args) {
         // 获取并打开COM4 (原代码中写的是COM4不是COM3)
         SerialPort comPort = SerialPort.getCommPort("COM4");

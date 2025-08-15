@@ -10,12 +10,18 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.jkfm1241.com.r485_demo.util.comsUtil.*;
+import static org.jkfm1241.com.r485_demo.util.comsUtil.bytesToHexString;
 
 @Slf4j
 @Service
 public class RequestQueryInfoServiceImpl implements RequestQueryInfoService {
+
+    // 使用AtomicBoolean保证线程安全
+    private static final AtomicBoolean portInUse = new AtomicBoolean(false);
+    private static SerialPort currentPort = null;
 
     @Value("${custom.bps}")
     private Integer bps;
@@ -42,7 +48,12 @@ public class RequestQueryInfoServiceImpl implements RequestQueryInfoService {
     private ModbusProperties modbusProperties;
 
     @Override
-    public void sendQuery() {
+    public synchronized boolean sendQuery() {
+        // 检查端口是否已被占用
+        if (portInUse.get()) {
+            log.warn("串口 {} 已被占用，请求被拒绝", port);
+            return false;
+        }
 
         SerialPort comPort = SerialPort.getCommPort(port);
         comPort.setBaudRate(bps);
@@ -58,70 +69,89 @@ public class RequestQueryInfoServiceImpl implements RequestQueryInfoService {
         );
 
         try {
-            if( comPort.openPort() ){
-                System.out.println("端口已连接！");
+            // 尝试获取端口使用权
+            if (portInUse.compareAndSet(false, true)) {
+                if (comPort.openPort()) {
+                    currentPort = comPort;
+                    log.info("端口 {} 已成功连接", port);
 
-                // 创建Modbus RTU消息
-                byte[] message = createModbusMessage( modbusProperties.getCommand() );
-                // 显示发送的16进制数据
-                System.out.println("发送: ");
-                printHex(message);
-                System.out.println();
-                // 发送数据
-                comPort.writeBytes(message, message.length);
+                    // 创建Modbus RTU消息
+                    byte[] message = createModbusMessage(modbusProperties.getCommand());
+                    log.info("发送:{} ",bytesToHexString(message));
 
-                // 等待并读取响应
-                int available = 0;
-                // 开始时间
-                long startTime = System.currentTimeMillis();
-                while (true) {
+                    // 发送数据
+                    comPort.writeBytes(message, message.length);
 
-                    // 返回当前可读字节数（不阻塞）。
-                    available = comPort.bytesAvailable();
-                    if( available > 0 ){
-                        break;
-                    }
+                    // 等待并读取响应
+                    int available = waitForResponse(comPort);
 
-                    // 超时控制
-                    if (System.currentTimeMillis() - startTime > readtimeout) {
-                        available = -1;
-                        break;
-                    }
+                    if (available > 0) {
+                        byte[] responseBuffer = new byte[available];
+                        int numRead = comPort.readBytes(responseBuffer, available);
+                        if (numRead > 0) {
+                            log.info("接收: {}",bytesToHexString(Arrays.copyOf(responseBuffer, numRead)));
+                            //printHex(Arrays.copyOf(responseBuffer, numRead));
+                            log.info("接收字节数：{}", responseBuffer.length);
 
-                }
+                            // CRC校验
+                            if (checkCRC(responseBuffer)) {
+                                log.info("CRC校验通过!");
 
-                if (available > 0) {
-                    byte[] responseBuffer = new byte[available];
-                    int numRead = comPort.readBytes(responseBuffer, available);
-                    if (numRead > 0) {
-                        System.out.print("接收: ");
-                        printHex(Arrays.copyOf(responseBuffer, numRead)); // 打印实际收到的字节
+                                // todo 存入DB，将cmos接口响应结果，并记录时间
 
-                        System.out.println("接收字节数："+responseBuffer.length);
-
-                        // CRC校验
-                        if (checkCRC(responseBuffer)) {
-                            System.out.print("CRC校验通过!");
+                                return true;
+                            }
                         }
-
+                    } else {
+                        log.warn("系统未收到响应！");
                     }
-                }else{
-                    System.out.println("系统,未收到响应！");
                 }
-
-
             }
+            return false;
         } catch (SerialPortInvalidPortException e) {
-            // 程序异常
+            log.error("无效的串口: {}", port, e);
+            return false;
         } finally {
-            // 关闭端口
+            // 释放端口资源
+            releasePort(comPort);
+        }
+    }
+
+    private int waitForResponse(SerialPort comPort) {
+        int available = 0;
+        long startTime = System.currentTimeMillis();
+
+        while (true) {
+            available = comPort.bytesAvailable();
+            if (available > 0) {
+                break;
+            }
+
+            if (System.currentTimeMillis() - startTime > readtimeout) {
+                available = -1;
+                break;
+            }
+
+            try {
+                Thread.sleep(100); // 添加短暂休眠减少CPU占用
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return available;
+    }
+
+    private synchronized void releasePort(SerialPort comPort) {
+        if (comPort != null && comPort.isOpen()) {
             try {
                 comPort.closePort();
+                log.info("端口 {} 已关闭", port);
             } catch (Exception e) {
-                // 端口关闭异常
+                log.error("关闭端口时发生异常", e);
             }
-            System.out.println("端口已关闭！");
         }
-
+        currentPort = null;
+        portInUse.set(false);
     }
 }
