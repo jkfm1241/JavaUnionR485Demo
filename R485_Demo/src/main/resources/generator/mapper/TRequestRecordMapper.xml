@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.jkfm1241.com.r485_demo.mapper.TRequestRecordMapper">
+
+    <resultMap id="BaseResultMap" type="org.jkfm1241.com.r485_demo.model.TRequestRecord">
+            <id property="id" column="id" />
+            <result property="reqsno" column="reqsno" />
+            <result property="respsno" column="respsno" />
+            <result property="createtime" column="createtime" />
+            <result property="updatetime" column="updatetime" />
+            <result property="status" column="status" />
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,reqsno,respsno,createtime,updatetime,status
+    </sql>
+</mapper>

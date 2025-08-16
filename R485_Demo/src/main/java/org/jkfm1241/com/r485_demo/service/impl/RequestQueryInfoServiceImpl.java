@@ -4,12 +4,15 @@ import com.fazecast.jSerialComm.SerialPort;
 import com.fazecast.jSerialComm.SerialPortInvalidPortException;
 import lombok.extern.slf4j.Slf4j;
 import org.jkfm1241.com.r485_demo.model.ModbusProperties;
+import org.jkfm1241.com.r485_demo.model.TRequestRecord;
 import org.jkfm1241.com.r485_demo.service.RequestQueryInfoService;
+import org.jkfm1241.com.r485_demo.service.TRequestRecordService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
+import java.util.Date;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.jkfm1241.com.r485_demo.util.comsUtil.*;
@@ -18,6 +21,9 @@ import static org.jkfm1241.com.r485_demo.util.comsUtil.bytesToHexString;
 @Slf4j
 @Service
 public class RequestQueryInfoServiceImpl implements RequestQueryInfoService {
+
+    @Autowired
+    private TRequestRecordService tRequestRecordService;
 
     // 使用AtomicBoolean保证线程安全
     private static final AtomicBoolean portInUse = new AtomicBoolean(false);
@@ -82,6 +88,13 @@ public class RequestQueryInfoServiceImpl implements RequestQueryInfoService {
                     // 发送数据
                     comPort.writeBytes(message, message.length);
 
+                    // DB 发送记录入库
+                    TRequestRecord requestRecord = new TRequestRecord();
+                    requestRecord.setCreatetime(new Date());
+                    requestRecord.setReqsno(bytesToHexString(message));
+                    requestRecord.setStatus(0);
+                    tRequestRecordService.save(requestRecord);
+
                     // 等待并读取响应
                     int available = waitForResponse(comPort);
 
@@ -90,14 +103,24 @@ public class RequestQueryInfoServiceImpl implements RequestQueryInfoService {
                         int numRead = comPort.readBytes(responseBuffer, available);
                         if (numRead > 0) {
                             log.info("接收: {}",bytesToHexString(Arrays.copyOf(responseBuffer, numRead)));
-                            //printHex(Arrays.copyOf(responseBuffer, numRead));
                             log.info("接收字节数：{}", responseBuffer.length);
 
                             // CRC校验
                             if (checkCRC(responseBuffer)) {
                                 log.info("CRC校验通过!");
 
-                                // todo 存入DB，将cmos接口响应结果，并记录时间
+                                requestRecord.setUpdatetime(new Date());
+                                requestRecord.setRespsno( bytesToHexString(Arrays.copyOf(responseBuffer, numRead)) );
+                                requestRecord.setStatus(1);
+                                requestRecord.setEvent_type(bytesToHexString(new byte[]{responseBuffer[3]}));
+                                requestRecord.setDevice_type(bytesToHexString(new byte[]{responseBuffer[5]}));
+                                // 对应功能码03
+                                requestRecord.setTwo_code(bytesToHexString(new byte[]{responseBuffer[6],responseBuffer[7],responseBuffer[8],responseBuffer[9],responseBuffer[10]}));
+                                // 对应功能码04
+                                // requestRecord.setOne_code(bytesToHexString(new byte[]{responseBuffer[9],responseBuffer[10]}));
+                                // requestRecord.setControl_no(bytesToHexString(new byte[]{responseBuffer[6],responseBuffer[7]}));// 控制器号
+                                // requestRecord.setBack_no(bytesToHexString(new byte[]{responseBuffer[8]})); // 回路号
+                                tRequestRecordService.updateById(requestRecord);
 
                                 return true;
                             }
